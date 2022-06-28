@@ -13,7 +13,7 @@ Finite Difference:
 						*
 						*
 						*
-				* * * * + * * * * 
+					* * * * + * * * * 
 						*
 						*
 						*
@@ -32,7 +32,7 @@ Multiple GPUs implementation, each will be responsible for one sub-wave-field do
       | | | | * * * * * * * * * * * - - - - | | | |     | | | | - - - - * * * * * * * * * * * - - - - | | | |		...  	| | | | - - - - * * * * * * * * * * * | | | |
       | | | | * * * * * * * * * * * - - - - | | | |     | | | | - - - - * * * * * * * * * * * - - - - | | | |		...  	| | | | - - - - * * * * * * * * * * * | | | |
 
-      padding		body     		halo    padding     padding   halo      	body 		   halo   padding 				padding   halo			body 		  padding
+      padding		body        halo    padding     padding   halo      	body 	       halo   padding 			 padding   halo		body 	      padding
 
 */
 
