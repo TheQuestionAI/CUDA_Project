@@ -13,7 +13,7 @@ Finite Difference:
 						*
 						*
 						*
-					* * * * + * * * * 
+				* * * * + * * * * 
 						*
 						*
 						*
@@ -32,7 +32,7 @@ Multiple GPUs implementation, each will be responsible for one sub-wave-field do
       | | | | * * * * * * * * * * * - - - - | | | |     | | | | - - - - * * * * * * * * * * * - - - - | | | |		...  	| | | | - - - - * * * * * * * * * * * | | | |
       | | | | * * * * * * * * * * * - - - - | | | |     | | | | - - - - * * * * * * * * * * * - - - - | | | |		...  	| | | | - - - - * * * * * * * * * * * | | | |
 
-      padding		body        halo    padding     padding   halo      	body 	       halo   padding 			 padding   halo		body 	      padding
+      padding		body     		halo    padding     padding   halo      	body 		   halo   padding 				padding   halo			body 		  padding
 
 */
 
@@ -88,58 +88,71 @@ void setup_constant_coefficient()
 // calculate each intervals for the halo region and body region.
 inline void calculate_halo_body_interval(int* halo_start, int* halo_end, int* body_start, int* body_end, const int ngpus, const int iny) 
 {
+	if(ngpus == 0)		// one gpu special case
+	{
+        body_start[idx] = PAD;
+        body_end[idx]   = iny - PAD2 - 1;
+
+        halo_start[idx] = iny - PAD2;
+        halo_end[idx]   = iny - PAD - 1;
+
+        return;		
+	}
+
     // halo regions
-    for (int idx = 0; idx < ngpus; ++idx) 
+    for(int idx = 0; idx < 2*(ngpus-1); ++idx) 
     {
-        if (idx == 0)		// only right hand side has halo region 
+        if (idx == 0)				// GPU 0 -> only right hand side has halo region 
         {
             body_start[idx] = PAD;
-            body_end[idx]   = iny - PAD2;
+            body_end[idx]   = iny - PAD2 - 1;
 
             halo_start[idx] = iny - PAD2;
-            halo_end[idx]   = iny - PAD;
+            halo_end[idx]   = iny - PAD - 1;
 
         }
-        else 
+        else if(idx == ngpus - 1)		// GPU N -> only left hand side has halo region
         {
-            haloStart[i] = NPAD;      // hard code, i == 1的case. 也即只有左边有halo区域.
-            haloEnd[i]   = NPAD2;
-        }
-    }
+            halo_start[idx] = PAD;      
+            halo_end[idx]   = PAD2 - 1;
 
-    // body regions
-    for (int i = 0; i < ngpus; ++i) 
-    { 
-        if (i == 0 && ngpus == 2) 
-        {   // 这里也是hard code, 有俩个GPU.
-            bodyStart[i] = NPAD;
-            bodyEnd[i]   = iny - NPAD2;
+            body_start[idx] = PAD2;
+            body_end[idx]   = iny - PAD - 1;  
         }
-        else 
-        {
-            bodyStart[i] = NPAD + NPAD;
-            bodyEnd[i]   = iny - NPAD;
+        else  							// GPU 1 ... N-1 -> both left and right side have halo region
+        {	// left halo
+            halo_start[idx] = PAD;      
+            halo_end[idx]   = PAD2 - 1;
+            // body
+            body_start[idx] = PAD2;
+            body_end[idx]   = iny - PAD2 - 1;          	
+            // right halo
+            halo_start[++idx] = iny - PAD2;
+            halo_end[++idx]   = iny - PAD - 1;
+
         }
-    }
+
 }
 
-
-inline void calcSkips(int *src_skip, int *dst_skip, const int nx, const int iny) {
+// re-visited
+inline void calcSkips(int* src_skip, int* dst_skip, const int nx, const int iny) 
+{
     src_skip[0] = nx * (iny - NPAD2);     // 计算源GPU内点区域所有点数. iny - NPAD2即内点区域y轴区间的长度. 记住只有俩个GPU, 也即任意一GPU的计算只有一边有halo区域. 
     dst_skip[0] = 0;                      // 目的GPU什么都不跳过.
     src_skip[1] = NPAD * nx;              // 计算padding/halo区域所有点数
     dst_skip[1] = (iny - NPAD) * nx;      // 计算目的GPU 内点区域 + halo区域所有点数. iny - NPAD即内点区域+halo区域的y轴长度.
 }
 
-// wavelet. 对波动方程添加初值wave. GPU kernel函数.
-__global__ void kernel_add_wavelet(float *g_u2, float wavelets, const int nx, const int ny, const int ngpus) {
-    // global grid idx for (x,y) plane
-    int ipos = (ngpus == 2 ? ny - 10 : ny / 2 - 10);
-    unsigned int ix = blockIdx.x * blockDim.x + threadIdx.x;
-    unsigned int idx = ipos * nx + ix;
-
-    if(ix == nx / 2) 
-      g_u2[idx] += wavelets;
+// intial wavelet for the wave field at time = 0. Need to select the central place GPU to set.
+__global__ void kernel_add_initial_wavelet(float* d_u, float init_wavelet, const int nx, const int iny, const int ngpus) 
+{
+    int src_ypos = (ngpus % 2 == 0 ? iny : iny / 2);			// ngpus even or odd, the central for y is differnt.
+    int src_xpos = nx / 2;
+    
+    unsigned int ix = blockIdx.x * blockDim.x + threadIdx.x;	// Align with the thread block and thread grid dimension selected.
+    unsigned int idx = src_ypos * nx + ix;		// 1D global index for wave field array
+    if(ix == src_xpos) 							// put the initial wave at the center of wave field u(x,y; t)
+		d_u[idx] += init_wavelet;
 }
 
 /*
@@ -150,65 +163,55 @@ __global__ void kernel_add_wavelet(float *g_u2, float wavelets, const int nx, co
     cudaMalloc((void**)&d_u1[i], ibyte);    g_u1 = &d_u1[i];
     cudaMalloc((void**)&d_u2[i], ibyte)     g_u2 = &d_u2[i];
 */
-// fd kernel function. 核心的2D有限差分求解波动方程的差分算子函数. 
-// 双缓冲数组 g_u1 和 g_u2. g_u2在函数入口时用于存储上一时刻的波场状态, g_u1用于在函数内部计算当前时刻的波场状态, 在函数末尾进行swap ping-pong.
-// nx表示x轴一列的点数. iStart和iEnd表示要计算的波长区域y轴区间.
-__global__ void kernel_2dfd(float *g_u1, float *g_u2, const int nx, const int iStart, const int iEnd) {
-    // global to line index
+// The core finite difference kernel function. 
+__global__ void kernel_2dfd(float *d_u1, float *d_u2, const int nx, const int iStart, const int iEnd) {
+
     unsigned int ix  = blockIdx.x * blockDim.x + threadIdx.x;           // 计算当前线程在线程网格的1D线性化全局x轴索引. 注意线程网格使用的x-y轴 和 波场网格使用的x-y轴 刚好相反.
 
-   // shared memory for x dimension
-    __shared__ float line[BDIMX + NPAD2];                               // 共享内存的大小基本上是跟着thread block的大小走的. 这里采用的是1D thread block, 因此共享内存简单起见也会被定义成1D的.
+    __shared__ float line[BDIMX + PAD2];                               // 共享内存的大小基本上是跟着thread block的大小走的. 这里采用的是1D thread block, 因此共享内存简单起见也会被定义成1D的.
     // 注意在line两边加padding, 这样的话就不用考虑边界case了. 所有点都用同样的代码模式.
 
     // smem idx for current point
-    unsigned int stx = threadIdx.x + NPAD;                              // 计算当前线程对应的共享内存索引. offset NPAD=4必加, 最开头NPAD个点是padding.
+    unsigned int stx = threadIdx.x + PAD;                              // 计算当前线程对应的共享内存索引. offset NPAD=4必加, 最开头NPAD个点是padding.
     unsigned int idx = ix + iStart * nx;                                // idx计算的是当前线程对应的GPU细分区域下的全局波场数组1D线性化索引. 特别注意, wave field数组是一个1Darray, 即使wave field是2D的.
     // iStart * nx 即是y轴下index = iStart之前的波场2D区域的点数(当前GPU的细分区域下). ix表示的是当前线程网格下的线程的1D线性化索引. 
     // 两者相加得到idx, idx即是当前线程要计算的对应的GPU细分区域下的2D全局波场点的1D线性化索引.
 
-    // a coefficient related to physical properties
-    const float alpha = 0.12f;
-
     // register for y value. 这里直接使用寄存器, 本质是与共享内存一样, 把全局内存的访问拉近到对寄存器的访问.
     float yval[9];      // y轴方向使用寄存器存储, 每个线程计算一个wave field点, 而y轴方向需要9点求偏导数.
-    for (int i = 0; i < 8; i++) 
-        yval[i] = g_u2[idx + (i - 4) * nx];   // 这里并没有对全局内存的连续访问啊! 这里只写入了y轴上的8个点 => + + + + * + + + => 第9个点放置在了for loop里写入.
+    #pragma unroll
+    for (unsigned int i = 0; i < 8; ++i) 
+        yval[i] = d_u2[idx + (i - 4) * nx];   // 这里并没有对全局内存的连续访问啊! 这里只写入了y轴上的8个点 => + + + + * + + + => 第9个点放置在了for loop里写入.
 
     // skip for the bottom most y value
-    int iskip = NPAD * nx;  // skip掉当前y轴4个点形成的2D区域, 这样我们可以到第九个点进行写入寄存器.
+    int iskip = PAD * nx;  // skip掉当前y轴4个点形成的2D区域, 这样我们可以到第九个点进行写入寄存器.
 
     #pragma unroll 9
-    for (int iy = iStart; iy < iEnd; iy++) {  // 循环使用共享内存, 以节约空间. 这里一个线程一次性将计算给定2D波长区域的一整条y轴区间长度的点.
+    for (unsigned int iy = iStart; iy < iEnd; ++iy) {  // 循环使用共享内存, 以节约空间. 这里一个线程一次性将计算给定2D波长区域的一整条y轴区间长度的点.
         // get yval[8] here
-        yval[8] = g_u2[idx + iskip];
+        yval[8] = d_u2[idx + iskip];
 
         // read halo part
-        if(threadIdx.x < NPAD) {      // 索引小于NPAD就是halo区域. 这里是对共享内存区域的写入.
-            line[threadIdx.x]  = g_u2[idx - NPAD];
-            line[stx + BDIMX]  = g_u2[idx + BDIMX];   // halo区域的的点将会多负责两个slot的共享内存写入.
+        if(threadIdx.x < PAD) {      // 索引小于NPAD就是halo区域. 这里是对共享内存区域的写入.
+            line[threadIdx.x]  = d_u2[idx - PAD];
+            line[stx + BDIMX]  = d_u2[idx + BDIMX];   // halo区域的的点将会多负责两个slot的共享内存写入.
         }
 
         line[stx] = yval[4];
         __syncthreads();              // 每个线程写入共享内存一个slot, 最后需要同步以使得线程对共享内存的写入全部完成.
 
         // 8rd fd operator. 这里开始真正的有限差分计算求当前时刻波场状态了.
-        if ( (ix >= NPAD) && (ix < nx - NPAD) ) {     // 特别注意, 只有 内点区域 + halo区域要计算波场.
+        if ( (ix >= PAD) && (ix < nx - PAD) ) {     // 特别注意, 只有 内点区域 + halo区域要计算波场.
             // center point
             float tmp = coef[0] * line[stx] * 2.0f;   // 中心点会被用2次. 一次x偏导, 一次y偏导.
-
             #pragma unroll
-            for(int d = 1; d <= 4; d++) {
-                tmp += coef[d] * (line[stx - d] + line[stx + d]);
-            }
-
-            #pragma unroll
-            for(int d = 1; d <= 4; d++) {
-                tmp += coef[d] * (yval[4 - d] + yval[4 + d]);
+            for(unsigned int d = 1; d <= 4; ++d) {
+                tmp += coef[d] * (line[stx - d] + line[stx + d]);			// d^2u/dx^2
+             	tmp += coef[d] * (yval[4 - d] + yval[4 + d]);				// d^u/dy^2
             }
 
             // time dimension
-            g_u1[idx] = yval[4] + yval[4] - g_u1[idx] + alpha * tmp;    // 有限差分计算相加.
+            d_u1[idx] = 2.0f * yval[4] - g_u1[idx] + dc_v * tmp;    // 有限差分计算相加.
         }
 
         #pragma unroll 8
@@ -223,14 +226,12 @@ __global__ void kernel_2dfd(float *g_u1, float *g_u2, const int nx, const int iS
 }
 
 // 多GPU实现2D波动方程u = u(x,y,t)的仿真计算.
-int main(int argc, char *argv[]) {
+int main(int argc, char** argv) {
 
     int ngpus;                                              // 多GPUs计算那么第一件事情就是确定设备中有多少个GPU!
     CUDA_ERROR_CHECK( cudaGetDeviceCount(&ngpus) );
     printf("> CUDA-capable device count: %i\n", ngpus);
 
-    isCapableP2P(ngpus);                                    // 第二件事情判断这些GPUs是否彼此支持p2p访问.
-    isUnifiedAddressing(ngpus);                             // 第三件事情判断这些GPUs是否共享一个UVA. 现在的话UVA已经被统一内存模型取代了. 更新的应该是判断这些GPUs是否支持统一内存模型.
     ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
     //  get it from command line
     if (argc > 1) {
@@ -240,22 +241,17 @@ int main(int argc, char *argv[]) {
         }
         ngpus  = atoi(argv[1]);         // 计算得出真正用于2D波动方程仿真计算的GPU数量.
     }
+    
     ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-    int iMovie = 500;                 // 指定要存储的波场snapshot的迭代步.
-    if(argc >= 3)                     // snapshot的迭代步也可以Linux Command指定.
-        iMovie = atoi(argv[2]);
-    ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-    printf("> run with device: %i\n", ngpus);
-
     // size
-    const int nsteps  = 600;                                            // 定义有限差分迭代时间步数.
-    const int nx      = 512;                                            // 定义波场wave field u(x,y; t)在x维度的网格大小x.
-    const int ny      = 512;                                            // 定义波场wave field u(x,y; t)在y维度的网格大小y.
-    const int iny     = ny / ngpus + NPAD * 2;                          // 简化问题, 统一以y轴划分每个分区, 在边界左右两边都有NPAD的padding点. iny表示的是每个GPU分配的分区的y维度网格大小, 包括padding区域.
+    const int nsteps  = 3600;                                            // 定义有限差分迭代时间步数.
+    const int nx      = 1024 * ngpus;                                    // 定义波场wave field u(x,y; t)在x维度的网格大小x.
+    const int ny      = 1024 * ngpus;                                    // 定义波场wave field u(x,y; t)在y维度的网格大小y.
+    const int iny     = ny / ngpus + PAD * 2;                            // 简化问题, 统一以y轴划分每个分区, 在边界左右两边都有NPAD的padding点. iny表示的是每个GPU分配的分区的y维度网格大小, 包括padding区域.
 
     size_t isize = nx * iny;                                            // 每个分区需要的网格点总数量.
     size_t ibyte = isize * sizeof(float);                               // 每个分区需要的设备内存字节数.
-    size_t iexchange = NPAD * nx * sizeof(float);                       // 需要在分区间进行数据交换的切片区域占据的内存字节数.
+    size_t iexchange = PAD * nx * sizeof(float);                        // 需要在分区间进行数据交换的切片区域占据的内存字节数.
     ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
     // set up gpu card
     float *d_u2[ngpus], *d_u1[ngpus];                                   // 浮点指针数组d_u2和d_u1. 使用2个设备数组d_u1, d_u2. 一个数组用于保存当前波场wave field的状态, 另一个数组用于保存更新后的波场wave field的状态.
@@ -340,23 +336,10 @@ int main(int argc, char *argv[]) {
         }
     }
 
-    CUDA_ERROR_CHECK( cudaSetDevice(0) );
-    CUDA_ERROR_CHECK( cudaEventRecord(stop, 0) );
-
     CUDA_ERROR_CHECK( cudaDeviceSynchronize() );
     CUDA_ERROR_CHECK( cudaGetLastError() );
-
-    float elapsed_time_ms = 0.0f;
-    CUDA_ERROR_CHECK( cudaEventElapsedTime(&elapsed_time_ms, start, stop) );
-
-    elapsed_time_ms /= nsteps;
-    printf("gputime: %8.2fms ", elapsed_time_ms);
-    printf("performance: %8.2f MCells/s\n", (double) nx * ny / (elapsed_time_ms * 1e3f) );
-    fflush(stdout);
     ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
     // clear
-    CUDA_ERROR_CHECK(cudaEventDestroy(start));
-    CUDA_ERROR_CHECK(cudaEventDestroy(stop));
     for (int i = 0; i < ngpus; i++) {
         CUDA_ERROR_CHECK( cudaSetDevice(i) );
 
