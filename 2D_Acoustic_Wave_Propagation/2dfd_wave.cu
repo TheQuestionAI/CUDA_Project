@@ -5,15 +5,15 @@ The code is solving second order 2D wave equation:
 	d^2u/dx^2 + d^u^2/du^2 = v^(-2) * d^2u/dt^2
 
 	u = u(x,y; t) 		=> the wave field
-	v = v(x,y) 			=> the constant wave velocity in medium.
+	v = v(x,y) 		=> the constant wave velocity in medium.
 
 Finite Difference:
-	We use 17-point stencil template to approximate the partial derivative at a single wave field point.
+	Use 17-point stencil template to approximate the partial derivative at a single wave field point.
 						*
 						*
 						*
 						*
-				* * * * + * * * * 
+					* * * * + * * * * 
 						*
 						*
 						*
@@ -21,21 +21,19 @@ Finite Difference:
 
 Multiple GPUs implementation, each will be responsible for one sub-wave-field domain.
 
-                  GPU 0                                          GPU 1 									    ... 				GPU N
-      | | | | * * * * * * * * * * * - - - - | | | |     | | | | - - - - * * * * * * * * * * * - - - - | | | | 		...  	| | | | - - - - * * * * * * * * * * * | | | |
-      | | | | * * * * * * * * * * * - - - - | | | |     | | | | - - - - * * * * * * * * * * * - - - - | | | |		...  	| | | | - - - - * * * * * * * * * * * | | | |
-      | | | | * * * * * * * * * * * - - - - | | | |     | | | | - - - - * * * * * * * * * * * - - - - | | | |		...  	| | | | - - - - * * * * * * * * * * * | | | |
-      | | | | * * * * * * * * * * * - - - - | | | |     | | | | - - - - * * * * * * * * * * * - - - - | | | |		...  	| | | | - - - - * * * * * * * * * * * | | | |
-      | | | | * * * * * * * * * * * - - - - | | | |     | | | | - - - - * * * * * * * * * * * - - - - | | | |		...  	| | | | - - - - * * * * * * * * * * * | | | |
-      | | | | * * * * * * * * * * * - - - - | | | |     | | | | - - - - * * * * * * * * * * * - - - - | | | |		...  	| | | | - - - - * * * * * * * * * * * | | | |
-      | | | | * * * * * * * * * * * - - - - | | | |     | | | | - - - - * * * * * * * * * * * - - - - | | | |		...  	| | | | - - - - * * * * * * * * * * * | | | |
-      | | | | * * * * * * * * * * * - - - - | | | |     | | | | - - - - * * * * * * * * * * * - - - - | | | |		...  	| | | | - - - - * * * * * * * * * * * | | | |
-      | | | | * * * * * * * * * * * - - - - | | | |     | | | | - - - - * * * * * * * * * * * - - - - | | | |		...  	| | | | - - - - * * * * * * * * * * * | | | |
+	  GPU 0                                          GPU 1 							... 				GPU N
+| | | | * * * * * * * * * * * - - - - | | | |     | | | | - - - - * * * * * * * * * * * - - - - | | | | 	...  	| | | | - - - - * * * * * * * * * * * | | | |
+| | | | * * * * * * * * * * * - - - - | | | |     | | | | - - - - * * * * * * * * * * * - - - - | | | |		...  	| | | | - - - - * * * * * * * * * * * | | | |
+| | | | * * * * * * * * * * * - - - - | | | |     | | | | - - - - * * * * * * * * * * * - - - - | | | |		...  	| | | | - - - - * * * * * * * * * * * | | | |
+| | | | * * * * * * * * * * * - - - - | | | |     | | | | - - - - * * * * * * * * * * * - - - - | | | |		...  	| | | | - - - - * * * * * * * * * * * | | | |
+| | | | * * * * * * * * * * * - - - - | | | |     | | | | - - - - * * * * * * * * * * * - - - - | | | |		...  	| | | | - - - - * * * * * * * * * * * | | | |
+| | | | * * * * * * * * * * * - - - - | | | |     | | | | - - - - * * * * * * * * * * * - - - - | | | |		...  	| | | | - - - - * * * * * * * * * * * | | | |
+| | | | * * * * * * * * * * * - - - - | | | |     | | | | - - - - * * * * * * * * * * * - - - - | | | |		...  	| | | | - - - - * * * * * * * * * * * | | | |
+| | | | * * * * * * * * * * * - - - - | | | |     | | | | - - - - * * * * * * * * * * * - - - - | | | |		...  	| | | | - - - - * * * * * * * * * * * | | | |
+| | | | * * * * * * * * * * * - - - - | | | |     | | | | - - - - * * * * * * * * * * * - - - - | | | |		...  	| | | | - - - - * * * * * * * * * * * | | | |
 
-      padding		body     		halo    padding     padding   halo      	body 		   halo   padding 				padding   halo			body 		  padding
-
+padding		body     		halo    padding     padding   halo      	body 		   halo   padding 				padding   halo			body 		  padding
 */
-
 
 #include <stdlib.h>
 #include <stdio.h>
@@ -57,13 +55,12 @@ Multiple GPUs implementation, each will be responsible for one sub-wave-field do
 
 #define v 0.12f 		// wave velocity square.
 
-// define thread block dimension, padding
+// define thread block dimension
 #define BDIMX 256
 
 // store the coefficient and wave evelocity to constant memory
 __constant__ float dc_coeff[5];
 __constant__ float dc_v;
-
 
 // Check error codes for CUDA functions
 void CUDA_ERROR_CHECK(cudaError_t err) 
@@ -74,7 +71,6 @@ void CUDA_ERROR_CHECK(cudaError_t err)
         exit(EXIT_FAILURE);
     }
 }
-
 
 // setup constant variables.
 void setup_constant_coefficient()
@@ -119,7 +115,7 @@ inline void calculate_halo_body_interval(int* halo_start, int* halo_end, int* bo
             body_start[idx] = PAD2;
             body_end[idx]   = iny - PAD - 1;  
         }
-        else  							// GPU 1 ... N-1 -> both left and right side have halo region
+        else  					// GPU 1 ... N-1 -> both left and right side have halo region
         {	// left halo
             halo_start[idx] = PAD;      
             halo_end[idx]   = PAD2 - 1;
