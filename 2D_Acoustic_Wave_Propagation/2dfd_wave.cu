@@ -5,10 +5,10 @@ The code is solving second order 2D wave equation:
 	d^2u/dx^2 + d^u^2/du^2 = v^(-2) * d^2u/dt^2
 
 	u = u(x,y; t) 		=> the wave field
-	v = v(x,y) 		=> the constant wave velocity in medium.
+	v = v(x,y) 			=> the constant wave velocity in medium.
 
 Finite Difference:
-	Use 17-point stencil template to approximate the partial derivative at a single wave field point.
+	We use 17-point stencil template to approximate the partial derivative at a single wave field point.
 						*
 						*
 						*
@@ -21,19 +21,29 @@ Finite Difference:
 
 Multiple GPUs implementation, each will be responsible for one sub-wave-field domain.
 
-	  GPU 0                                          GPU 1 							... 				GPU N
-| | | | * * * * * * * * * * * - - - - | | | |     | | | | - - - - * * * * * * * * * * * - - - - | | | | 	...  	| | | | - - - - * * * * * * * * * * * | | | |
-| | | | * * * * * * * * * * * - - - - | | | |     | | | | - - - - * * * * * * * * * * * - - - - | | | |		...  	| | | | - - - - * * * * * * * * * * * | | | |
-| | | | * * * * * * * * * * * - - - - | | | |     | | | | - - - - * * * * * * * * * * * - - - - | | | |		...  	| | | | - - - - * * * * * * * * * * * | | | |
-| | | | * * * * * * * * * * * - - - - | | | |     | | | | - - - - * * * * * * * * * * * - - - - | | | |		...  	| | | | - - - - * * * * * * * * * * * | | | |
-| | | | * * * * * * * * * * * - - - - | | | |     | | | | - - - - * * * * * * * * * * * - - - - | | | |		...  	| | | | - - - - * * * * * * * * * * * | | | |
-| | | | * * * * * * * * * * * - - - - | | | |     | | | | - - - - * * * * * * * * * * * - - - - | | | |		...  	| | | | - - - - * * * * * * * * * * * | | | |
-| | | | * * * * * * * * * * * - - - - | | | |     | | | | - - - - * * * * * * * * * * * - - - - | | | |		...  	| | | | - - - - * * * * * * * * * * * | | | |
-| | | | * * * * * * * * * * * - - - - | | | |     | | | | - - - - * * * * * * * * * * * - - - - | | | |		...  	| | | | - - - - * * * * * * * * * * * | | | |
-| | | | * * * * * * * * * * * - - - - | | | |     | | | | - - - - * * * * * * * * * * * - - - - | | | |		...  	| | | | - - - - * * * * * * * * * * * | | | |
+                  GPU 0                                          GPU 1 							... 				GPU N
+      | | | | * * * * * * * * * * * - - - - | | | |     | | | | - - - - * * * * * * * * * * * - - - - | | | | 		...  	| | | | - - - - * * * * * * * * * * * | | | |
+      | | | | * * * * * * * * * * * - - - - | | | |     | | | | - - - - * * * * * * * * * * * - - - - | | | |		...  	| | | | - - - - * * * * * * * * * * * | | | |
+      | | | | * * * * * * * * * * * - - - - | | | |     | | | | - - - - * * * * * * * * * * * - - - - | | | |		...  	| | | | - - - - * * * * * * * * * * * | | | |
+      | | | | * * * * * * * * * * * - - - - | | | |     | | | | - - - - * * * * * * * * * * * - - - - | | | |		...  	| | | | - - - - * * * * * * * * * * * | | | |
+      | | | | * * * * * * * * * * * - - - - | | | |     | | | | - - - - * * * * * * * * * * * - - - - | | | |		...  	| | | | - - - - * * * * * * * * * * * | | | |
+      | | | | * * * * * * * * * * * - - - - | | | |     | | | | - - - - * * * * * * * * * * * - - - - | | | |		...  	| | | | - - - - * * * * * * * * * * * | | | |
+      | | | | * * * * * * * * * * * - - - - | | | |     | | | | - - - - * * * * * * * * * * * - - - - | | | |		...  	| | | | - - - - * * * * * * * * * * * | | | |
+      | | | | * * * * * * * * * * * - - - - | | | |     | | | | - - - - * * * * * * * * * * * - - - - | | | |		...  	| | | | - - - - * * * * * * * * * * * | | | |
+      | | | | * * * * * * * * * * * - - - - | | | |     | | | | - - - - * * * * * * * * * * * - - - - | | | |		...  	| | | | - - - - * * * * * * * * * * * | | | |
 
-padding		body     		halo    padding     padding   halo      	body 		   halo   padding 				padding   halo			body 		  padding
+      padding		body     		halo    padding     padding   halo      	body 		   halo   padding 				padding   halo			body 		  padding
+							
+      x
+      ^
+      |
+      |
+      |
+      |
+      |
+      |------------------------------------------------------------------------------------------------------------------------------------------> y
 */
+
 
 #include <stdlib.h>
 #include <stdio.h>
@@ -55,12 +65,13 @@ padding		body     		halo    padding     padding   halo      	body 		   halo   pa
 
 #define v 0.12f 		// wave velocity square.
 
-// define thread block dimension
+// define thread block dimension, padding
 #define BDIMX 256
 
 // store the coefficient and wave evelocity to constant memory
 __constant__ float dc_coeff[5];
 __constant__ float dc_v;
+
 
 // Check error codes for CUDA functions
 void CUDA_ERROR_CHECK(cudaError_t err) 
@@ -72,17 +83,18 @@ void CUDA_ERROR_CHECK(cudaError_t err)
     }
 }
 
-// setup constant variables.
-void setup_constant_coefficient()
+
+// setup wave equation and finite difference coefficients.
+void setup_coefficient()
 {
-	const float h_coef[5] = {a0, a1, a2, a3, a5};
+	const float h_coef[5] = {a0, a1, a2, a3, a4};
 	const float h_v = v;
 	CUDA_ERROR_CHECK( cudaMemcpyToSymbol(dc_coef, h_coef, 5 * sizeof(float)) );
-    CUDA_ERROR_HANDLE( cudaMemcpyToSymbol(dc_v, h_v, sizeof(float)) );
+    CUDA_ERROR_HANDLE( cudaMemcpyToSymbol(&dc_v, &h_v, sizeof(float)) );
 }
 
 // calculate each intervals for the halo region and body region.
-inline void calculate_halo_body_interval(int* halo_start, int* halo_end, int* body_start, int* body_end, const int ngpus, const int iny) 
+inline void calculate_halo_body_yregion(int* halo_start, int* halo_end, int* body_start, int* body_end, const int ngpus, const int iny) 
 {
 	if(ngpus == 0)		// one gpu special case
 	{
@@ -115,7 +127,7 @@ inline void calculate_halo_body_interval(int* halo_start, int* halo_end, int* bo
             body_start[idx] = PAD2;
             body_end[idx]   = iny - PAD - 1;  
         }
-        else  					// GPU 1 ... N-1 -> both left and right side have halo region
+        else  							// GPU 1 ... N-1 -> both left and right side have halo region
         {	// left halo
             halo_start[idx] = PAD;      
             halo_end[idx]   = PAD2 - 1;
@@ -131,7 +143,7 @@ inline void calculate_halo_body_interval(int* halo_start, int* halo_end, int* bo
 }
 
 // re-visited
-inline void calcSkips(int* src_skip, int* dst_skip, const int nx, const int iny) 
+inline void calcSkips(int* src_skip, int* dst_skip, const int ngpus, const int nx, const int iny) 
 {
     src_skip[0] = nx * (iny - NPAD2);     // 计算源GPU内点区域所有点数. iny - NPAD2即内点区域y轴区间的长度. 记住只有俩个GPU, 也即任意一GPU的计算只有一边有halo区域. 
     dst_skip[0] = 0;                      // 目的GPU什么都不跳过.
@@ -151,14 +163,6 @@ __global__ void kernel_add_initial_wavelet(float* d_u, float init_wavelet, const
 		d_u[idx] += init_wavelet;
 }
 
-/*
-    const int iny    = ny / ngpus + NPAD * 2;                           // 简化问题, 统一以y轴划分每个分区, 在边界左右两边都有NPAD的padding点. iny表示的是每个GPU分配的分区的y维度网格大小, 包括padding区域.
-    size_t isize     = nx * iny;                                        // 每个分区需要的网格点总数量.
-    size_t ibyte     = isize * sizeof(float);                           // 每个分区需要的设备内存字节数.
-    size_t iexchange = NPAD * nx * sizeof(float);                       // 需要在分区间进行数据交换的切片区域占据的内存字节数.
-    cudaMalloc((void**)&d_u1[i], ibyte);    g_u1 = &d_u1[i];
-    cudaMalloc((void**)&d_u2[i], ibyte)     g_u2 = &d_u2[i];
-*/
 // The core finite difference kernel function. 
 __global__ void kernel_2dfd(float *d_u1, float *d_u2, const int nx, const int iStart, const int iEnd) {
 
@@ -221,74 +225,70 @@ __global__ void kernel_2dfd(float *d_u1, float *d_u2, const int nx, const int iS
     }
 }
 
-// 多GPU实现2D波动方程u = u(x,y,t)的仿真计算.
+
 int main(int argc, char** argv) {
 
-    int ngpus;                                              // 多GPUs计算那么第一件事情就是确定设备中有多少个GPU!
+    int ngpus;                                              // make the choice simple, use all available CUDA-capable GPUs.
     CUDA_ERROR_CHECK( cudaGetDeviceCount(&ngpus) );
-    printf("> CUDA-capable device count: %i\n", ngpus);
-
-    ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-    //  get it from command line
-    if (argc > 1) {
-        if (atoi(argv[1]) > ngpus) {    // 输入的要使用的GPU设备数量不能大于计算机所配备的GPU实际数量.
-            fprintf(stderr, "Invalid number of GPUs specified: %d is greater than the total number of GPUs in this platform (%d)\n", atoi(argv[1]), ngpus);
-            exit(1);
-        }
-        ngpus  = atoi(argv[1]);         // 计算得出真正用于2D波动方程仿真计算的GPU数量.
-    }
+    printf("Single computing node CUDA-capable GPU count: %i\n", ngpus);		
     
     ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
     // size
-    const int nsteps  = 3600;                                            // 定义有限差分迭代时间步数.
-    const int nx      = 1024 * ngpus;                                    // 定义波场wave field u(x,y; t)在x维度的网格大小x.
-    const int ny      = 1024 * ngpus;                                    // 定义波场wave field u(x,y; t)在y维度的网格大小y.
-    const int iny     = ny / ngpus + PAD * 2;                            // 简化问题, 统一以y轴划分每个分区, 在边界左右两边都有NPAD的padding点. iny表示的是每个GPU分配的分区的y维度网格大小, 包括padding区域.
+    const int nsteps  = 3600;                                            // total iteration steps.
+    const int nx      = 1024 * ngpus;                                    // wave field u(x,y;t) x (vertical) dimension.
+    const int ny      = 1024 * ngpus;                                    // wave field u(x,y;t) y (horizontal) dimension.
+    const int iny     = ny / ngpus + PAD * 2;                            // Split wave-field along the y axis. Each GPU a sub-wave-field (with padding to simplify the division).
 
-    size_t isize = nx * iny;                                            // 每个分区需要的网格点总数量.
-    size_t ibyte = isize * sizeof(float);                               // 每个分区需要的设备内存字节数.
-    size_t iexchange = PAD * nx * sizeof(float);                        // 需要在分区间进行数据交换的切片区域占据的内存字节数.
+    size_t isize = nx * iny;                                             // sub-wave-field state points.
+    size_t ibyte = isize * sizeof(float);                                // sub-wave-field state points memory size.
+    size_t iexchange = PAD * nx * sizeof(float);                         // the memory size needed to be exchanged between GPUs (i.e, halo region memory size).
+    
     ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-    // set up gpu card
-    float *d_u2[ngpus], *d_u1[ngpus];                                   // 浮点指针数组d_u2和d_u1. 使用2个设备数组d_u1, d_u2. 一个数组用于保存当前波场wave field的状态, 另一个数组用于保存更新后的波场wave field的状态.
-    for(int i = 0; i < ngpus; i++) {
-        // set device
-        CUDA_ERROR_CHECK( cudaSetDevice(i) );                          // 不要忘记第一件事情就是set我们想要使用的GPU为当前GPU!!!  
+    // double buffering in each GPU. one buffer d_u1 saves the wave field in previous state, another d_u2 saves the wave field in current state.
+    float *d_u1[ngpus], *d_u2[ngpus];
+    for(int idx = 0; idx < ngpus; ++idx) {
+        // set device. Device must be set before any operation on the specified GPU.
+        CUDA_ERROR_CHECK( cudaSetDevice(i) );                          
 
-        // allocate device memories   // 对每个GPU分配好需要的设备内存.
-        CUDA_ERROR_CHECK( cudaMalloc((void**)&d_u1[i], ibyte) );       // 每个GPU分配的分区的字节总数ibyte.
+        // allocate device memories.
+        CUDA_ERROR_CHECK( cudaMalloc((void**)&d_u1[i], ibyte) );       
         CUDA_ERROR_CHECK( cudaMalloc((void**)&d_u2[i], ibyte) );
 
-        CUDA_ERROR_CHECK( cudaMemset(d_u1[i], 0, ibyte) );             // 初始化波场状态值为0.
-        CUDA_ERROR_CHECK( cudaMemset(d_u2[i], 0, ibyte) );             // 初始化波场状态值为0.
+        // initial memory value all to 0.
+        CUDA_ERROR_CHECK( cudaMemset(d_u1[i], 0, ibyte) );             
+        CUDA_ERROR_CHECK( cudaMemset(d_u2[i], 0, ibyte) );             
 
-        printf("GPU %i: allocated %.2f MB gmem\n", i, (4.f * ibyte) / (1024.f * 1024.f) );
-        setup_coef ();                                                  // 配置有限差分系数.
+        setup_coefficient();   // Each device, set up its own coefficients. We must pass these coefficients onto each device's constant memory.     
     }
+
     ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-    // stream definition
-    cudaStream_t stream_halo[ngpus], stream_body[ngpus];                // 只有halo区域的数据需要在GPU间进行相互传输. 因此我们创建多个独立的stream.
-    // stream_halo数组用于halo区域的波场状态计算以及GPU间的数据传输; stream_body用于网格内点波场状态计算`.
-    for (int i = 0; i < ngpus; i++) {
-        CUDA_ERROR_CHECK( cudaSetDevice(i) );                          // 不要忘记第一件事情就是set我们想要使用的GPU为当前GPU!!!  
-        CUDA_ERROR_CHECK( cudaStreamCreate(&stream_halo[i]) );
-        CUDA_ERROR_CHECK( cudaStreamCreate(&stream_body[i]) );
+    // Create the CUDA streams, overlap halo region data transfer with body state update computation.
+    cudaStream_t halo_streams[ngpus], body_streams[ngpus]; 
+    for (int idx = 0; idx < ngpus; ++idx) {
+        CUDA_ERROR_CHECK( cudaSetDevice(idx) );      
+        // create CUDA stream under associate CUDA device.                    	
+        CUDA_ERROR_CHECK( cudaStreamCreate(&halo_streams[idx]) );		// Each CUDA stream and CUDA event can only associate to one signle CUDA device
+        CUDA_ERROR_CHECK( cudaStreamCreate(&body_streams[idx]) );
     }
+
     ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
     // calculate index for computation. 计算halo区域和网格内点区域的区间索引!!!
-    int haloStart[ngpus], bodyStart[ngpus], haloEnd[ngpus], bodyEnd[ngpus];
-    calcIndex(haloStart, haloEnd, bodyStart, bodyEnd, ngpus, iny);      // iny表示的是每个GPU分配的分区的y维度网格大小, 包括padding区域.
+    unsigned int size = (ngpus == 1 ? ngpus : 2*(ngpus - 1);
+    int halo_starts[size], halo_ends[size]; 
+    int body_starts[size], body_ends[size];
+    calculate_halo_body_yregion(halo_starts, halo_ends, body_starts, body_ends, ngpus, iny);		// Remember iny is with padding left and right.
 
     int src_skip[ngpus], dst_skip[ngpus];
 
     if(ngpus > 1) 
         calcSkips(src_skip, dst_skip, nx, iny);
+
     ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
     // kernel launch configuration
-    dim3 block(BDIMX);                          // 对于2D波动方程仿真, 这里采用的是1D thread block + 1D thread grid. 为什么不采用2D thread block和2D thread grid?
-    dim3 grid(nx / block.x);                    // 1D线程网格的大小即 nx除以线程块的大小. 在x轴方向上并没有划分区域, 而是按照y轴方向划分区域.
+    dim3 block(BDIMX, 1, 1);                          	// 1d thread block + 1d thread grid. each thread block corresponds to 1 segment in x dimension.
+    dim3 grid(nx/block.x, 1, 1);                    	// Split the single total line in x dimension to several BDIMX size segments.
 
-    // set up event for timing                  // 记录时间.
+    // set up event for timing
     CUDA_ERROR_CHECK( cudaSetDevice(0) );
     cudaEvent_t start, stop;
     CUDA_ERROR_CHECK( cudaEventCreate(&start) );
@@ -296,14 +296,13 @@ int main(int argc, char** argv) {
     CUDA_ERROR_CHECK( cudaEventRecord(start, 0) );
 
     // main loop for wave propagation
-    for(int istep = 0; istep < nsteps; istep++) {     // 开始迭代! 以进行波动仿真!
-        // save snap image
-        if(istep == iMovie) 
-            saveSnapshotIstep(istep, nx, ny, ngpus, d_u2);
-
-        // add wavelet only onto gpu0
+    for(int istep = 0; istep < nsteps; ++istep) 
+    {
+        // add wavelet to the central of wave field at time = 0.
         if (istep == 0) {         // 在step = 0时, 引入initial value of wave.
             CUDA_ERROR_CHECK( cudaSetDevice(0) );
+            kernel_add_initial_wavelet<<<grid, block>>>(d_u2, init_wavelet, const int nx, const int iny, const int ngpus) 
+
             kernel_add_wavelet<<<grid, block>>>(d_u2[0], 20.0, nx, iny, ngpus);
         }
 
@@ -334,6 +333,7 @@ int main(int argc, char** argv) {
 
     CUDA_ERROR_CHECK( cudaDeviceSynchronize() );
     CUDA_ERROR_CHECK( cudaGetLastError() );
+
     ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
     // clear
     for (int i = 0; i < ngpus; i++) {
