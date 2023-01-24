@@ -1,2 +1,2 @@
 # CUDA_Project
-A repository to contain all CUDA projects did
+A repository to contain all CUDA projects
